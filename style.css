@@ -326,11 +326,12 @@ textarea::placeholder { color: var(--dim); }
 }
 
 .toggle-label {
-  font-family: var(--sans);
-  font-size: .72rem;
-  color: var(--dim);
-  transition: color .2s;
-}
+   font-family: var(--sans);
+   font-size: .72rem;
+   color: var(--dim);
+   transition: color .2s;
+   white-space: nowrap;
+ }
 
 .toggle input:checked ~ .toggle-label { color: var(--accent); }
 

@@ -17,3 +17,6 @@ coverage/
 .cache/
 *.min.js
 *.map
+.playwright-mcp/
+playwright-report/
+test-results/

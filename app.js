@@ -169,6 +169,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // --- Toast notifications (click to dismiss early) ---
+  // warn toasts stick around longer — they're the most common message.
   function showToast(msg, type = 'error') {
     const existing = document.querySelector('.toast');
     if (existing) existing.remove();
@@ -188,7 +189,12 @@ document.addEventListener('DOMContentLoaded', () => {
     toast.addEventListener('click', dismiss);
 
     requestAnimationFrame(() => toast.classList.add('show'));
-    setTimeout(dismiss, 4000);
+    setTimeout(dismiss, type === 'warn' ? 7000 : type === 'success' ? 3000 : 4000);
+  }
+
+  // --- Simple sleep utility for phase transitions ---
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   // --- Animated button dots + phase progress ---
@@ -213,10 +219,8 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   function hideProgress() {
     if (!progressWrap || !progressFill) return;
-    setTimeout(() => {
-      progressWrap.classList.remove('show');
-      setTimeout(() => { progressFill.style.width = '0%'; }, 300);
-    }, 600);
+    progressWrap.classList.remove('show');
+    progressFill.style.width = '0%';
   }
 
   // --- GO button ---
@@ -227,10 +231,13 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    // Gentle nudge for very short input — not a block, just a heads-up.
+    // Short-input warning — make it visible, not dismissible as background noise.
     const inputWords = countWords(text);
     if (inputWords < 8) {
-      showToast(`Only ${inputWords} word${inputWords === 1 ? '' : 's'} — results may be odd`, 'warn');
+      showToast(`Only ${inputWords} word${inputWords === 1 ? '' : 's'} — results may be odd. Add more text for best results.`, 'warn');
+      btnGo.style.borderColor = 'var(--warn)';
+      btnGo.style.boxShadow = '0 0 8px rgba(245,158,11,.3)';
+      setTimeout(() => { btnGo.style.borderColor = ''; btnGo.style.boxShadow = ''; }, 3000);
     }
 
     btnGo.disabled = true;
@@ -242,6 +249,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const wantTranslate = toggleTranslate && toggleTranslate.checked && !toggleTranslate.disabled;
     if (wantTranslate) {
       translateReady = LayerD.warmup();
+      status.className = 'status checking';
+      status.textContent = 'Loading translation packs...';
+      setProgress(5);
     }
 
     try {
@@ -257,6 +267,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const candidateCounts = { light: 1, medium: 3, strong: 3 };
       const totalCandidates = candidateCounts[strength] || 1;
       setProgress(20);
+      await sleep(150);
 
       // Phase 2: Paraphrase
       startDots('paraphrasing');
@@ -285,13 +296,15 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         status.className = 'status ready';
         status.textContent = 'done';
+        await sleep(150);
       } catch (err) {
         console.warn('Layer B failed, using Layer A only:', err.message);
         layerB = layerA;
         meta = `${countWords(layerA)} → ${countWords(layerB)} words · Layer A only`;
         status.className = 'status unavail';
         status.textContent = 'Layer A only';
-        showToast('Gemini Nano unavailable — output is Unicode-scrubbed only', 'warn');
+        showToast('No AI model found — output is Unicode-scrubbed only. Enable Chrome flags to unlock paraphrasing.', 'warn');
+        await sleep(150);
       }
 
       // Phase 3: Translation round-trip (optional, toggle).
@@ -306,11 +319,11 @@ document.addEventListener('DOMContentLoaded', () => {
           // Warmup failed — pre-flight for a specific reason.
           const davail = await LayerD.checkAvailability();
           if (davail === 'unsupported') {
-            showToast('Translator API not supported in this browser — skipping', 'warn');
+            showToast('Translator API not available in this browser — skipping', 'warn');
           } else if (davail === 'unavailable') {
-            showToast('JA packs unavailable — enable chrome://flags/#translation-api', 'warn');
+            showToast('Japanese translation packs not available — enable chrome://flags/#translation-api', 'warn');
           } else {
-            showToast(`Translation setup failed (${warmResult.message}) — continuing without it`, 'warn');
+            showToast(`Translation packs failed to load (${warmResult.message}) — continuing without it`, 'warn');
           }
         } else {
           try {
@@ -341,9 +354,11 @@ document.addEventListener('DOMContentLoaded', () => {
               showToast(`Translation lost ${rt.unrestored} locked term${rt.unrestored > 1 ? 's' : ''}`, 'warn');
             }
             setProgress(90);
+            await sleep(150);
           } catch (err) {
             console.warn('Layer D failed, skipping translation:', err.message);
-            showToast(`Translation failed (${err.message}) — continuing without it`, 'warn');
+            showToast('Translation round-trip failed — continuing without it', 'warn');
+            await sleep(150);
           }
         }
       }
@@ -407,20 +422,30 @@ document.addEventListener('DOMContentLoaded', () => {
       layerB = polished.text;
       if (polished.count > 0) meta += ` · ${polished.count} phrases polished`;
       setProgress(100);
+      await sleep(150);
       hideProgress();
 
       output.value = layerB;
       if (metaLine) metaLine.textContent = meta;
       btnCopy.disabled = false;
 
-      // Success flash
+      // Success flash — stronger, longer
       editorOut.style.borderColor = 'var(--accent)';
-      editorOut.style.boxShadow = '0 0 20px var(--glow)';
-      setTimeout(() => { editorOut.style.borderColor = ''; editorOut.style.boxShadow = ''; }, 1200);
+      editorOut.style.boxShadow = '0 0 30px var(--glow), 0 0 60px rgba(6,214,160,0.06)';
+      setTimeout(() => { editorOut.style.borderColor = ''; editorOut.style.boxShadow = ''; }, 1800);
+
+      // Success toast
+      showToast('Done', 'success');
 
     } catch (err) {
       console.error(err);
-      showToast('Something went wrong: ' + err.message, 'error');
+      const msg = err.message || 'Unknown error';
+      const friendly = msg.includes('timed out')
+        ? 'The AI model took too long to respond — try again'
+        : msg.includes('unavailable') || msg.includes('not supported')
+        ? 'AI model not available — check Chrome flags'
+        : `Something went wrong: ${msg}`;
+      showToast(friendly, 'error');
       status.className = 'status unavail';
       status.textContent = 'error';
       if (progressWrap) progressWrap.classList.remove('show');
