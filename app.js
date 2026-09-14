@@ -165,6 +165,9 @@ document.addEventListener('DOMContentLoaded', () => {
   if (toggleTranslate) {
     toggleTranslate.addEventListener('change', () => {
       savePrefs({ translate: toggleTranslate.checked });
+      if (translateToggleWrap) {
+        translateToggleWrap.setAttribute('aria-checked', String(toggleTranslate.checked));
+      }
     });
   }
 
@@ -475,6 +478,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- File drop ---
   dropZone.addEventListener('click', () => fileInput.click());
+
+  dropZone.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      fileInput.click();
+    }
+  });
 
   dropZone.addEventListener('dragover', (e) => {
     e.preventDefault();

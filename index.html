@@ -24,8 +24,8 @@
       <span class="counter" id="wordCount">0 words</span>
       <button class="clear" id="btnClear" hidden>clear</button>
       <textarea id="inputText" placeholder="Paste text here" spellcheck="false"></textarea>
-      <div class="drop" id="dropZone">drop file or click</div>
-      <input type="file" id="fileInput" accept=".txt,.md" hidden>
+      <div class="drop" id="dropZone" role="button" tabindex="0" aria-label="Upload a text or markdown file">drop file or click</div>
+      <input type="file" id="fileInput" accept=".txt,.md" hidden aria-hidden="true">
     </div>
 
     <div class="controls">
@@ -39,8 +39,8 @@
         <span class="shortcut-hint">⌘/Ctrl + Enter</span>
       </div>
       <span class="meta" id="metaLine"></span>
-      <label class="toggle" id="translateToggleWrap" title="Round-trip through Japanese to break AI patterns (desktop Chrome only)">
-        <input type="checkbox" id="toggleTranslate" hidden>
+      <label class="toggle" id="translateToggleWrap" title="Round-trip through Japanese to break AI patterns (desktop Chrome only)" role="switch" aria-checked="false" aria-label="Enable EN→JA→EN translation round-trip">
+        <input type="checkbox" id="toggleTranslate" hidden aria-hidden="true">
         <span class="toggle-track"><span class="toggle-knob"></span></span>
         <span class="toggle-label">EN→JA→EN round-trip</span>
       </label>
