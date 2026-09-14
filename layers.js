@@ -158,6 +158,24 @@ const LayerA = (() => {
     return cp >= 0x1800 && cp <= 0x18AF;
   }
 
+  // Previous-codepoint probe that is safe when the neighbor is astral.
+  // The main loop walks UTF-16 units, so text.codePointAt(i - 1) lands on
+  // a lone low surrogate when the previous character is astral (emoji,
+  // CJK-ext) — isEmojiBase()/isCJK() then fail and ZWJ sequences like
+  // 👨‍👩‍👧 get shredded into separate people. Step back over the
+  // surrogate instead. curCp is the current char's codepoint (the loop
+  // already advanced i past an astral current char, so account for that).
+  // Forward probes need no help: codePointAt at a high surrogate decodes
+  // the pair correctly.
+  function prevCp(text, i, curCp) {
+    const curStart = curCp > 0xFFFF ? i - 1 : i;
+    if (curStart <= 0) return null;
+    let start = curStart - 1;
+    const u = text.charCodeAt(start);
+    if (u >= 0xDC00 && u <= 0xDFFF && start - 1 >= 0) start--;
+    return text.codePointAt(start);
+  }
+
   // Strip decision
   function shouldStrip(cp) {
     if (STRIP.has(cp)) return true;
@@ -195,7 +213,7 @@ const LayerA = (() => {
 
       // Emoji glue — keep if part of emoji sequence
       if (EMOJI_GLUE.has(cp)) {
-        const prev = i > 0 ? text.codePointAt(i - 1) : null;
+        const prev = prevCp(text, i, cp);
         const next = i + 1 < text.length ? text.codePointAt(i + 1) : null;
         if (cp === 0xFE0E || cp === 0xFE0F) {
           if (prev !== null && isEmojiBase(prev)) { out.push(ch); continue; }
@@ -207,7 +225,7 @@ const LayerA = (() => {
 
       // Script joiners in valid script context
       if (SCRIPT_JOINERS.has(cp)) {
-        const prev = i > 0 ? text.codePointAt(i - 1) : null;
+        const prev = prevCp(text, i, cp);
         const next = i + 1 < text.length ? text.codePointAt(i + 1) : null;
         if (prev !== null && next !== null && isMongolianLetter(prev) && isMongolianLetter(next)) {
           out.push(ch); continue;
@@ -221,13 +239,13 @@ const LayerA = (() => {
 
       // Mongolian FVS after Mongolian letter
       if (MONG_FVS.has(cp)) {
-        const prev = i > 0 ? text.codePointAt(i - 1) : null;
+        const prev = prevCp(text, i, cp);
         if (prev !== null && isMongolianLetter(prev)) { out.push(ch); continue; }
       }
 
       // CJK VS
       if (isVS(cp)) {
-        const prev = i > 0 ? text.codePointAt(i - 1) : null;
+        const prev = prevCp(text, i, cp);
         if (prev !== null && isCJK(prev)) { out.push(ch); continue; }
       }
 
@@ -326,6 +344,26 @@ function findProtectedSpans(text, max = 30) {
   const camel = /\b[A-Za-z]*[a-z][A-Z][A-Za-z]*\b/g;
   while ((m = camel.exec(text))) add(m[0]);
 
+  // Emoji sequences (👨‍👩‍👧, ✅, 👍🏽, 🇬🇧, 1️⃣) — both Nano and MT drop or
+  // rewrite them freely, which makes Layer A's careful ZWJ preservation
+  // pointless. Lock each distinct sequence so candidates that delete them
+  // score worse and MT gaps never swallow them (splitGaps stitches locked
+  // spans back verbatim). Capped at 10: emoji-heavy texts must not starve
+  // the 30-span budget. Digits/#/* only count as keycaps WITH U+20E3 — a
+  // bare "1" (as in "2019") must never lock.
+  const EMOJI_CORE = '[\\u{1F000}-\\u{1FAFF}\\u{2600}-\\u{27BF}\\u{2B00}-\\u{2BFF}\\u{2190}-\\u{25FF}\\u203C\\u2049\\u2122\\u2139\\u00A9\\u00AE\\u3030\\u303D\\u3297\\u3299][\\u{1F3FB}-\\u{1F3FF}]?\\uFE0F?';
+  const emojiRe = new RegExp(
+    '[\\u{1F1E6}-\\u{1F1FF}]{2}' +                    // flags (RI pairs)
+    '|\\u{1F3F4}[\\u{E0020}-\\u{E007E}]+\\u{E007F}' + // subdivision flags
+    '|[#*0-9]\\uFE0F?\\u20E3' +                       // keycaps
+    '|(?:' + EMOJI_CORE + ')(?:\\u200D(?:' + EMOJI_CORE + '))*', // ZWJ chains
+    'gu'
+  );
+  const seenEmoji = new Set();
+  while ((m = emojiRe.exec(text)) && seenEmoji.size < 10) {
+    if (!seenEmoji.has(m[0])) { seenEmoji.add(m[0]); add(m[0]); }
+  }
+
   // Word-form numbers with units ("three seconds", "twenty people") —
   // the digit-only pattern misses these, and MT rewrites them freely.
   const wordNum = /\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million)(?:\s+(?:hundred|thousand|million))?\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?|people|men|women|children|times)\b|\b(?:dozens?|hundreds|thousands|millions|billions|trillions)\b/gi;
@@ -368,6 +406,26 @@ function findProtectedSpans(text, max = 30) {
     if (c >= 3) add(w);
   }
 
+  // Repeated word-pairs ("robust solutions" x2) are usually key domain
+  // terms — the single-word rule (3+) misses them, and both Nano and MT
+  // rewrite multi-word jargon freely. Lock 4+ letter pairs occurring 2+
+  // times. The includes() check is load-bearing: hyphenated pairs like
+  // "data-driven" split into ["data","driven"], and locking the joined
+  // "data driven" (which never occurs verbatim) would false-report every
+  // candidate as missing a term. Surface form is kept so the
+  // byte-identical check works on case.
+  const words4 = text.match(/[A-Za-z]{4,}/g) || [];
+  const biFreq = new Map(); // lower pair -> { n, first }
+  for (let i = 0; i + 1 < words4.length; i++) {
+    const key = (words4[i] + ' ' + words4[i + 1]).toLowerCase();
+    const rec = biFreq.get(key);
+    if (rec) rec.n++;
+    else biFreq.set(key, { n: 1, first: words4[i] + ' ' + words4[i + 1] });
+  }
+  for (const { n, first } of biFreq.values()) {
+    if (n >= 2 && text.includes(first)) add(first);
+  }
+
   return [...spans.keys()]
     .sort((a, b) => b.length - a.length)
     .slice(0, max);
@@ -397,6 +455,15 @@ function lexicalDivergence(a, b) {
 function countWords(text) {
   const t = text.trim();
   return t ? t.split(/\s+/).length : 0;
+}
+
+// Quote a locked span for the prompt listing. Spans can contain literal
+// quotes themselves (quoted dialogue is a first-class lock source), and
+// interpolating them raw breaks the `"..."` delimiters into ambiguity
+// the model must guess at (""secret"" — which quotes are syntax, which
+// are content?). Backslash-escape so each term reads as one unit.
+function quoteSpan(s) {
+  return `"${String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
 // Case sets: words seen (only-ever-lowercase vs ever-capitalized) in a
@@ -505,8 +572,17 @@ function varyRhythm(text, reference = '', locked = []) {
 
   const out = paras.map((para, pi) => {
     if (pi % 2 === 1 || !para.trim()) return para;
-    let sents = para.match(/[^.!?…]+[.!?…]+/g);
-    if (!sents) return para;
+    // match() drops a trailing fragment with no terminal punctuation
+    // ("...last sentence. trailing words") — reattach it, or a 3+
+    // sentence paragraph silently loses its tail. If the matches aren't a
+    // clean prefix run (degenerate leading delimiters), bail out entirely
+    // rather than risk dropping text.
+    let sents = para.match(/[^.!?…]+[.!?…]+/g) || [];
+    if (!sents.length) return para;
+    const consumed = sents.join('').length;
+    if (para.slice(0, consumed) !== sents.join('')) return para;
+    const rest = para.slice(consumed).trim();
+    if (rest) sents.push(rest);
     sents = sents.map((s) => s.trim()).filter(Boolean);
     if (sents.length < 3) return para;
     if (stddev(sents.map(countWords)) >= 6) return para;
@@ -543,10 +619,12 @@ function varyRhythm(text, reference = '', locked = []) {
       }
       let cut = -1;
       let cutLen = 0;
+      // Candidates come from two patterns — sort by position so the
+      // earliest valid cut wins, not just the earliest ", and".
       const cands = [
         ...s.matchAll(/, and ([a-z])/g),
         ...s.matchAll(/, (which|who) /g),
-      ];
+      ].sort((a, b) => a.index - b.index);
       for (const c of cands) {
         const leftWords = countWords(s.slice(0, c.index));
         if (leftWords >= 8 && !inSpan(ranges, c.index, c[0].length)) {
@@ -642,7 +720,7 @@ const LayerB = (() => {
     const pov = `RULE 2 (absolute): Keep the EXACT same point of view, tense, and narrator. If the text is third-person ("Leo climbed"), it stays third-person — never switch to first-person ("I noticed", "I was telling"). Never insert yourself as a narrator, never add "you know" style framing, never change who speaks, acts, or observes. Same characters, same roles, same perspective.`;
 
     const lockedRule = locked.length
-      ? `LOCKED TERMS (absolute): These exact strings must appear UNCHANGED in the output, same spelling and case: ${locked.map((s) => `"${s}"`).join(', ')}. Never drop, reword, or "synonymize" them.`
+      ? `LOCKED TERMS (absolute): These exact strings must appear UNCHANGED in the output, same spelling and case: ${locked.map(quoteSpan).join(', ')}. Never drop, reword, or "synonymize" them.`
       : '';
 
     const voice = `VOICE RULE (absolute): Write plainly. Prefer short, direct sentences over long flowing ones. FORBIDDEN — never use these or anything shaped like them:
@@ -705,7 +783,7 @@ Say the plain thing. "He was confused and nervous" beats "he felt a surge of con
   async function repair(text, locked = []) {
     const s = await getSession();
     const lockedRule = locked.length
-      ? `LOCKED TERMS (absolute): These exact strings must appear UNCHANGED in the output, same spelling and case: ${locked.map((x) => `"${x}"`).join(', ')}.`
+      ? `LOCKED TERMS (absolute): These exact strings must appear UNCHANGED in the output, same spelling and case: ${locked.map(quoteSpan).join(', ')}.`
       : '';
     const prompt = `Fix ONLY the grammar and word order of this text. Do NOT rephrase, do NOT substitute synonyms, do NOT add ideas, flourishes, or new words beyond minimal glue (articles, prepositions) needed for grammatical sentences. You may move words and fix verb forms. Every fact, name, number, and locked term stays byte-identical.\n${lockedRule}\nReturn ONLY the repaired text, nothing else.\n\nText:\n${text}`;
     const out = await withTimeout(s.prompt(prompt), 90000, 'Repair');

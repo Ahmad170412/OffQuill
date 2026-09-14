@@ -22,7 +22,7 @@ OffQuill is a browser-native text processing tool that scrubs invisible Unicode 
 3. **Polishes AI-isms away** — deterministic phrase swaps that replace verbose filler, jargon, and robotic constructions with plain English
 4. **Optionally round-trips through Japanese** — reconstructs text via EN→JA→EN to break English AI-idiom patterns at the distribution level
 
-No text ever leaves your browser. No API keys. No network calls.
+No text ever leaves your browser. No API keys. No network calls — not even webfonts (system font stack, enforced by a `connect-src 'none'` Content-Security-Policy).
 
 **What this is:** a text-level processor that strips invisible Unicode artifacts and rewrites AI-sounding prose. It is not a document redaction tool — it does not remove metadata from PDFs or office files.
 
@@ -76,8 +76,7 @@ Uses Chrome's `Translator` API to route text through Japanese, breaking English 
 2. **Enable Chrome flags** (see below — 3 flags required)
 3. Paste text, choose a strength level, click **remove watermark**
 4. Or press **⌘/Ctrl + Enter** to run instantly
-5. Drop a `.txt` or `.md` file to load it (5MB max)
-6. Toggle **EN→JA→EN round-trip** on the left for the translation pass
+5. Toggle **EN→JA→EN round-trip** on the left for the translation pass
 
 ---
 
@@ -115,8 +114,7 @@ Gemini Nano isn't enabled. You need three Chrome flags:
 - **Work in any browser other than Chrome** (desktop)
 - Work without Chrome flags enabled
 - Remove metadata from documents (PDFs, Word, etc.) — text-only processing
-- Guarantee watermark removal from files with complex embedded structures
-- Handle files larger than 5MB
+- Accept file uploads — copy-paste only
 - Replace a proper document redaction tool
 
 ---

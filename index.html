@@ -3,12 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- No third-party requests of any kind (system fonts only). This
+       policy self-enforces that: scripts/styles/images/fonts load from
+       local files, and page-initiated network (fetch/XHR/WS) is denied.
+       Chrome's on-device AI APIs are browser internals, unaffected. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; font-src 'self'; style-src 'self'; script-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
   <title>OffQuill</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="style.css">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 </head>
 <body>
 
@@ -20,36 +22,10 @@
 
   <main class="main">
 
-    <!-- Mode slider: Text | Code -->
-    <div class="mode-bar">
-      <div class="mode-switch">
-        <button class="mode-pill active" data-mode="text">Text</button>
-        <button class="mode-pill" data-mode="code">Code</button>
-        <span class="mode-slide"></span>
-      </div>
-    </div>
-
     <div class="editor" id="editorInput">
       <span class="counter" id="wordCount">0 words</span>
-      <span class="counter" id="lineCount" hidden>0 lines</span>
       <button class="clear" id="btnClear" hidden>clear</button>
       <textarea id="inputText" placeholder="Paste text here" spellcheck="false"></textarea>
-      <div class="drop" id="dropZone" role="button" tabindex="0" aria-label="Upload a text or code file">drop file or click</div>
-      <input type="file" id="fileInput" accept=".txt,.md,.py,.js,.jsx,.ts,.tsx,.mjs,.cjs,.java,.cpp,.cc,.c,.h,.hpp,.go,.rs" hidden aria-hidden="true">
-      <div class="lang-selector" id="langSelector" hidden>
-        <label for="languageSelect">Language:</label>
-        <select id="languageSelect">
-          <option value="auto">Auto-detect</option>
-          <option value="python">Python</option>
-          <option value="javascript">JavaScript</option>
-          <option value="typescript">TypeScript</option>
-          <option value="java">Java</option>
-          <option value="cpp">C/C++</option>
-          <option value="c">C</option>
-          <option value="go">Go</option>
-          <option value="rust">Rust</option>
-        </select>
-      </div>
     </div>
 
     <div class="controls">
@@ -133,7 +109,6 @@
   </main>
 
   <script src="layers.js"></script>
-  <script src="code.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
