@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OffQuill</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <header class="header">
+    <span class="logo">&#9670;</span>
+    <h1>OffQuill</h1>
+    <span class="status" id="status"></span>
+  </header>
+
+  <main class="main">
+
+    <div class="editor" id="editorInput">
+      <span class="counter" id="wordCount">0 words</span>
+      <button class="clear" id="btnClear" hidden>clear</button>
+      <textarea id="inputText" placeholder="Paste text here" spellcheck="false"></textarea>
+      <div class="drop" id="dropZone">drop file or click</div>
+      <input type="file" id="fileInput" accept=".txt,.md" hidden>
+    </div>
+
+    <div class="controls">
+      <div class="strength">
+        <button class="pill active" data-s="light">light</button>
+        <button class="pill" data-s="medium">medium</button>
+        <button class="pill" data-s="strong">strong</button>
+      </div>
+      <div class="go-wrap">
+        <button class="go" id="btnGo">remove watermark</button>
+        <span class="shortcut-hint">⌘/Ctrl + Enter</span>
+      </div>
+      <span class="meta" id="metaLine"></span>
+      <label class="toggle" id="translateToggleWrap" title="Round-trip through Japanese to break AI patterns (desktop Chrome only)">
+        <input type="checkbox" id="toggleTranslate" hidden>
+        <span class="toggle-track"><span class="toggle-knob"></span></span>
+        <span class="toggle-label">translate</span>
+      </label>
+    </div>
+
+    <div class="progress" id="progressWrap">
+      <div class="progress-fill" id="progressFill"></div>
+    </div>
+
+    <div class="editor output" id="editorOutput">
+      <textarea id="outputText" readonly placeholder="Result..."></textarea>
+      <button class="copy" id="btnCopy" disabled>copy</button>
+    </div>
+
+    <details class="setup" id="setupBanner" hidden>
+      <summary>Gemini Nano isn't enabled — here's how to fix it</summary>
+      <div class="setup-body">
+        <p class="setup-explain">OffQuill needs Gemini Nano to paraphrase text. It's built into Chrome but needs two flags turned on.</p>
+        <div class="setup-step">
+          <span class="step-num">1</span>
+          <div class="step-content">
+            <span class="step-title">Open Chrome flags</span>
+            <div class="step-copy" data-copy="chrome://flags/#optimization-guide-on-device-model">
+              <code>chrome://flags/#optimization-guide-on-device-model</code>
+              <button class="copy-link">copy</button>
+            </div>
+            <span class="step-hint">Paste this into your Chrome address bar and press Enter</span>
+          </div>
+        </div>
+        <div class="setup-step">
+          <span class="step-num">2</span>
+          <div class="step-content">
+            <span class="step-title">Set it to <strong>Enabled BypassPerfRequirement</strong></span>
+            <span class="step-hint">Find the dropdown and select "Enabled BypassPerfRequirement" (this skips hardware checks)</span>
+          </div>
+        </div>
+        <div class="setup-step">
+          <span class="step-num">3</span>
+          <div class="step-content">
+            <span class="step-title">Open the second flag</span>
+            <div class="step-copy" data-copy="chrome://flags/#prompt-api-for-gemini-nano">
+              <code>chrome://flags/#prompt-api-for-gemini-nano</code>
+              <button class="copy-link">copy</button>
+            </div>
+            <span class="step-hint">Paste this into your Chrome address bar and press Enter</span>
+          </div>
+        </div>
+        <div class="setup-step">
+          <span class="step-num">4</span>
+          <div class="step-content">
+            <span class="step-title">Set it to <strong>Enabled</strong></span>
+            <span class="step-hint">Same as before — find the dropdown, select "Enabled"</span>
+          </div>
+        </div>
+        <div class="setup-step">
+          <span class="step-num">5</span>
+          <div class="step-content">
+            <span class="step-title">Relaunch Chrome</span>
+            <span class="step-hint">Click the "Relaunch" button that appears at the bottom, or just quit and reopen Chrome</span>
+          </div>
+        </div>
+        <p class="setup-note">After relaunching, come back here and refresh the page. The banner will disappear.</p>
+      </div>
+    </details>
+
+  </main>
+
+  <script src="layers.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
