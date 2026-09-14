@@ -353,9 +353,6 @@ document.addEventListener('DOMContentLoaded', () => {
             layerB = rt.text;
             translated = true;
             rtKept = rt.kept || 0;
-            if (rt.unrestored > 0) {
-              showToast(`Translation lost ${rt.unrestored} locked term${rt.unrestored > 1 ? 's' : ''}`, 'warn');
-            }
             setProgress(90);
             await sleep(150);
           } catch (err) {
@@ -393,7 +390,16 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
 
-      // Phase 4b: Translation quality gate. The round-trip is a gamble —
+      // Phase 4b: MT case-noise cleanup (translate runs only). JA→EN
+      // often returns Titlecased fragments ("Machine Learning Grew").
+      // Words that were only-ever-lowercase pre-translation get
+      // lowercased mid-sentence; sentence starts and locked terms stay.
+      if (translated) {
+        layerB = fixMtCapitalization(layerB, preDtext, locked);
+        layerB = fixMtTense(layerB);
+      }
+
+      // Phase 4c: Translation quality gate. The round-trip is a gamble —
       // sometimes JA→EN diverges (good), sometimes it snaps back toward
       // the original phrasing (bad, e.g. 35% runs). If the final text is
       // lexically CLOSER to the scrubbed original than the paraphrase
@@ -424,8 +430,26 @@ document.addEventListener('DOMContentLoaded', () => {
       const polished = applyPhraseSwaps(layerB);
       layerB = polished.text;
       if (polished.count > 0) meta += ` · ${polished.count} phrases polished`;
+
+      // Phase 5b: Rhythm variance (burstiness). Uniform medium-length
+      // sentences read as AI; this merges shorts and splits monsters.
+      // Paragraphs that are already varied self-skip, so narrative
+      // rhythm is never touched. Reference = closest human-voice text.
+      const rhythm = varyRhythm(layerB, translated ? preDtext : layerA, locked);
+      if (rhythm.merges + rhythm.splits > 0) {
+        layerB = rhythm.text;
+        meta += ' · rhythm';
+      }
+
+      // Phase 5c: Parenthetical asides. Humans bracket appositives in
+      // parens; AI leans on comma-appositives. Meaning-identical
+      // punctuation swap (inner text verbatim, spans safe), capped.
+      const parens = parenthesizeAppositives(layerB);
+      if (parens.count > 0) {
+        layerB = parens.text;
+        meta += ' · parens';
+      }
       setProgress(100);
-      await sleep(150);
       hideProgress();
 
       output.value = layerB;

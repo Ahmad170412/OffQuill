@@ -296,7 +296,7 @@ function cleanSpan(s) {
   return s.replace(/\s+/g, ' ').trim();
 }
 
-function findProtectedSpans(text, max = 20) {
+function findProtectedSpans(text, max = 30) {
   const spans = new Map(); // span -> count
   const add = (s) => {
     s = cleanSpan(s);
@@ -314,33 +314,58 @@ function findProtectedSpans(text, max = 20) {
   const month = /\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}(?:,\s*\d{4})?\b/g;
   while ((m = month.exec(text))) add(m[0]);
 
-  const numeric = /\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b|\b(?:19|20)\d{2}\b|\b\d+(?:[.,]\d+)?(?:\s?(?:%|percent|USD|EUR|GBP|kg|g|km|ms|s|px|GB|MB|KB|years?|months?|weeks?|days?|hours?|minutes?|seconds?))?\b/gi;
+  const numeric = /\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b|\b(?:19|20)\d{2}\b|\b\d+(?:[.,]\d+)?(?:\s?(?:%|percent|USD|EUR|GBP|kg|g|km|ms|s|px|GB|MB|KB|hundreds?|thousands?|millions?|billions?|trillions?|years?|months?|weeks?|days?|hours?|minutes?|seconds?|parameters?|people))?\b/gi;
   while ((m = numeric.exec(text))) add(m[0]);
 
   const acronym = /\b[A-Z0-9]{2,}(?:[-/][A-Z0-9]+)*\b/g;
   while ((m = acronym.exec(text))) add(m[0]);
 
+  // CamelCase terms ("AlexNet", "iPhone", "McDonald") — interior capitals
+  // mean proper noun/term even at a single occurrence. One pass, no
+  // counting needed.
+  const camel = /\b[A-Za-z]*[a-z][A-Z][A-Za-z]*\b/g;
+  while ((m = camel.exec(text))) add(m[0]);
+
   // Word-form numbers with units ("three seconds", "twenty people") —
   // the digit-only pattern misses these, and MT rewrites them freely.
-  const wordNum = /\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million)(?:\s+(?:hundred|thousand|million))?\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?|people|men|women|children|times)\b/gi;
+  const wordNum = /\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million)(?:\s+(?:hundred|thousand|million))?\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?|people|men|women|children|times)\b|\b(?:dozens?|hundreds|thousands|millions|billions|trillions)\b/gi;
   while ((m = wordNum.exec(text))) add(m[0]);
 
-  // Conservative name lock: repeated capitalized tokens (likely names),
-  // not one-off sentence starters or generic style phrases.
-  // Occurrence counting early-exits at 3 (we only need "≥2") — a full
-  // split() per candidate is O(n²) and hangs on large pastes.
+  // Name lock: repeated capitalized tokens (likely names), PLUS
+  // single-occurrence Titlecase words in MID-sentence position. A
+  // capitalized word that never starts a sentence is almost certainly a
+  // proper noun ("Dartmouth" in "the Dartmouth workshop") — previously
+  // these went to MT unprotected and could vanish entirely. One linear
+  // pass, no per-candidate scanning.
   const title = /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\b/g;
+  const seenTitle = new Map(); // phrase -> { total, mid }
   while ((m = title.exec(text))) {
     const phrase = cleanSpan(m[0]);
     if (STOP_WORDS.has(phrase)) continue;
     if (phrase.length < 3) continue;
-    let occurrences = 0;
-    let pos = -1;
-    while (occurrences < 3 && (pos = text.indexOf(phrase, pos + 1)) !== -1) {
-      occurrences++;
-    }
-    if (occurrences < 2) continue;
-    add(phrase);
+    // Sentence-initial? Walk back past spaces, quotes, brackets.
+    let j = m.index - 1;
+    while (j >= 0 && ' \t"\u201c\'\u2018('.includes(text[j])) j--;
+    const initial = j < 0 || '.!?\u2026\n'.includes(text[j]);
+    const rec = seenTitle.get(phrase) || { total: 0, mid: 0 };
+    rec.total++;
+    if (!initial) rec.mid++;
+    seenTitle.set(phrase, rec);
+  }
+  for (const [phrase, rec] of seenTitle) {
+    if (rec.total >= 2 || rec.mid >= 1) add(phrase);
+  }
+
+  // Repeated content words ("parameters" x3) are usually key domain
+  // terms — MT synonym-swaps them freely ("settings"). Lock 6+ letter
+  // words occurring 3+ times. Over-locking glue ("however") is harmless:
+  // it's preserved verbatim, which is always correct.
+  const freq = new Map();
+  for (const w of text.toLowerCase().match(/[a-z]{6,}/g) || []) {
+    freq.set(w, (freq.get(w) || 0) + 1);
+  }
+  for (const [w, c] of freq) {
+    if (c >= 3) add(w);
   }
 
   return [...spans.keys()]
@@ -372,6 +397,175 @@ function lexicalDivergence(a, b) {
 function countWords(text) {
   const t = text.trim();
   return t ? t.split(/\s+/).length : 0;
+}
+
+// Case sets: words seen (only-ever-lowercase vs ever-capitalized) in a
+// reference, plus locked-span words. Shared by the MT case fix and the
+// rhythm pass so both agree on what's safe to lowercase.
+function buildCaseSets(reference, locked = []) {
+  const seen = new Set();
+  const seenCap = new Set();
+  for (const w of String(reference).match(/[A-Za-z]+(?:'[a-z]+)?/g) || []) {
+    seen.add(w.toLowerCase());
+    if (/[A-Z]/.test(w)) seenCap.add(w.toLowerCase());
+  }
+  const lockedWords = new Set();
+  for (const s of locked) {
+    for (const w of String(s).match(/[A-Za-z]+/g) || []) lockedWords.add(w.toLowerCase());
+  }
+  return { seen, seenCap, lockedWords };
+}
+
+// Safe to lowercase mid-sentence? Only if the word was only-ever
+// lowercase in the reference and isn't part of a locked term.
+function canLowercase(word, sets) {
+  const lw = word.toLowerCase();
+  return sets.seen.has(lw) && !sets.seenCap.has(lw) && !sets.lockedWords.has(lw);
+}
+
+// Sentence-case repair for MT noise ("Machine Learning Grew Significant").
+// Words that appear ONLY in lowercase in the reference are lowercased when
+// they show up Titlecased mid-sentence in MT output. Sentence-initial
+// words and locked terms are never touched.
+function fixMtCapitalization(text, reference, locked = []) {
+  const sets = buildCaseSets(reference, locked);
+  return String(text).split(/([.!?…]+\s+|\n+)/).map((chunk, i) => {
+    if (i % 2 === 1) return chunk; // delimiter, keep verbatim
+    return chunk.replace(/^([\"“”'']*)([A-Za-z]+)([\s\S]*)$/, (m, q, first, rest) => {
+      const fixed = rest.replace(/\b([A-Z][a-z]+)\b/g, (w) =>
+        (canLowercase(w, sets) ? w.toLowerCase() : w));
+      return q + first + fixed;
+    });
+  }).join('');
+}
+
+// Appositive → parenthetical ("AlexNet, a neural network, proved" →
+// "AlexNet (a neural network) proved"). Humans use parenthetical asides
+// constantly; AI prose leans on comma-appositives. Pure punctuation
+// swap — the inner text is preserved verbatim, so locked spans inside
+// (years, names) survive untouched by construction. Capped at 2 per
+// text (overuse is its own tell). Returns { text, count }.
+function parenthesizeAppositives(text) {
+  let out = String(text);
+  const patterns = [
+    /, ((?:a|an|the) [^,()]{2,40}),/g,
+    /, ((?:released|created|founded|born|published|launched) [^,()]{2,40}),/gi,
+  ];
+  let count = 0;
+  const CAP = 2;
+  for (const re of patterns) {
+    if (count >= CAP) break;
+    re.lastIndex = 0;
+    let m;
+    let result = '';
+    let last = 0;
+    while ((m = re.exec(out)) && count < CAP) {
+      result += out.slice(last, m.index) + ` (${m[1]})`;
+      last = m.index + m[0].length;
+      count++;
+    }
+    if (last > 0) out = result + out.slice(last);
+  }
+  return { text: out, count };
+}
+
+// MT tense flip ("GPT-3 will be released in 2020"): future-tense passive
+// paired with a past year is always wrong. Narrow pattern — only fires
+// on "will be <past-participle> in <past-year>".
+function fixMtTense(text) {
+  const thisYear = new Date().getFullYear();
+  return String(text).replace(/\b([Ww])ill be ([A-Za-z]+ed) in ((?:19|20)\d{2})\b/g,
+    (m, w, verb, year) => (Number(year) < thisYear
+      ? `${w === 'W' ? 'Was' : 'was'} ${verb} in ${year}`
+      : m));
+}
+
+// Rhythm variance (burstiness). Human prose mixes short and long
+// sentences; uniform medium-length sentences read as AI. Two safe ops:
+//   merge: "Short one. Next..." → "Short one; next..." (≤10 words,
+//     next ≤25, same paragraph, no chaining)
+//   split: >32-word sentences break at ", and "/" which "/" who ".
+// Locked spans are never split through; a merged sentence's first word
+// is lowercased only if only-ever-lowercase in the reference.
+// Paragraphs that are already varied (length stddev ≥ 6) or have fewer
+// than 3 sentences are never touched — narrative rhythm is safe.
+// Returns { text, merges, splits }.
+function varyRhythm(text, reference = '', locked = []) {
+  const sets = buildCaseSets(reference || text, locked);
+  const paras = String(text).split(/(\n+)/);
+  let merges = 0;
+  let splits = 0;
+
+  const stddev = (arr) => {
+    const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
+    return Math.sqrt(arr.reduce((a, b) => a + (b - mean) ** 2, 0) / arr.length);
+  };
+  const inSpan = (ranges, idx, len) =>
+    ranges.some(([s, e]) => idx < e && idx + len > s);
+
+  const out = paras.map((para, pi) => {
+    if (pi % 2 === 1 || !para.trim()) return para;
+    let sents = para.match(/[^.!?…]+[.!?…]+/g);
+    if (!sents) return para;
+    sents = sents.map((s) => s.trim()).filter(Boolean);
+    if (sents.length < 3) return para;
+    if (stddev(sents.map(countWords)) >= 6) return para;
+
+    // Merge pass: short sentence folds into the next via ";".
+    const merged = [];
+    for (let i = 0; i < sents.length; i++) {
+      const cur = sents[i];
+      const nxt = sents[i + 1];
+      if (nxt && countWords(cur) <= 10 && countWords(nxt) <= 25 &&
+          /[A-Za-z][.!?…]$/.test(cur) && !/[\"“”'')\]]$/.test(cur)) {
+        const fixedNext = nxt.replace(/^([\"“”'']*)([A-Za-z]+)/, (m, q, w) =>
+          q + (canLowercase(w, sets) ? w.toLowerCase() : w));
+        merged.push(cur.replace(/[.!?…]+$/, '') + '; ' + fixedNext);
+        merges++;
+        i++; // no chaining
+      } else {
+        merged.push(cur);
+      }
+    }
+
+    // Split pass: monsters break at safe conjunctions. Locked-span
+    // ranges are computed against the (possibly merged) sentence itself.
+    const final = [];
+    for (const s of merged) {
+      if (countWords(s) <= 32) { final.push(s); continue; }
+      const ranges = [];
+      for (const span of locked) {
+        if (!span) continue;
+        let p = -1;
+        while ((p = s.indexOf(span, p + 1)) !== -1) {
+          ranges.push([p, p + span.length]);
+        }
+      }
+      let cut = -1;
+      let cutLen = 0;
+      const cands = [
+        ...s.matchAll(/, and ([a-z])/g),
+        ...s.matchAll(/, (which|who) /g),
+      ];
+      for (const c of cands) {
+        const leftWords = countWords(s.slice(0, c.index));
+        if (leftWords >= 8 && !inSpan(ranges, c.index, c[0].length)) {
+          cut = c.index;
+          cutLen = c[0].length - (c[1] ? c[1].length : 0);
+          break;
+        }
+      }
+      if (cut === -1) { final.push(s); continue; }
+      const left = s.slice(0, cut).trim() + '.';
+      let right = s.slice(cut + cutLen).trim();
+      right = right.replace(/^([\"“”'']*)([a-z])/, (m, q, c) => q + c.toUpperCase());
+      final.push(left, right);
+      splits++;
+    }
+    return final.join(' ');
+  });
+
+  return { text: out.join(''), merges, splits };
 }
 
 // Race a promise against a timeout so a hung on-device call can never
@@ -798,79 +992,88 @@ const LayerD = (() => {
     return withTimeout(t.translate(text), 120000, 'Translation');
   }
 
+  // Split text into alternating gap/span parts using locked spans
+  // (longest first, regex-escaped). Stitching the parts back together
+  // reproduces the input byte-identically.
+  function splitGaps(text, locked) {
+    const spans = (locked || []).filter((s) => s).sort((a, b) => b.length - a.length);
+    if (!spans.length) return [{ span: false, text }];
+    const re = new RegExp(spans.map(escapeRegExp).join('|'), 'g');
+    const parts = [];
+    let last = 0;
+    let m;
+    while ((m = re.exec(text))) {
+      if (m.index > last) parts.push({ span: false, text: text.slice(last, m.index) });
+      parts.push({ span: true, text: m[0] });
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) parts.push({ span: false, text: text.slice(last) });
+    return parts;
+  }
+
+  // Gap guards (pure — unit-testable). Returns 'scrambled', 'voice',
+  // or null (translation accepted).
+  // Length guard: a sane translation stays within ~3x word count.
+  // Extreme ratios mean the MT scrambled, hallucinated, or expanded a
+  // short fragment into a full sentence ("in about 70 years" → "The
+  // transition from early research... took approximately 70 years"),
+  // which then stitches into a doubled subject next to a locked span.
+  // Applies from 3 words up; 1-2 word gaps ride through (nothing to
+  // expand into, variance naturally high).
+  // POV guard: translation must not introduce first-person pronouns the
+  // source gap didn't have. Applies at any gap length.
+  function gapTripsGuards(before, after) {
+    const wb = countWords(before);
+    const wa = countWords(after);
+    if (wb >= 3 && (wa / wb > 2.5 || wa / wb < 0.3)) return 'scrambled';
+    if (countFirstPerson(after) > countFirstPerson(before)) return 'voice';
+    return null;
+  }
+
   // Full round-trip. onProgress(pair, a, b):
   //   ('en-ja' | 'ja-en', pct) — download progress (warmup phase)
   //   ('segments', done, total) — per-piece translation progress
-  // opts.locked: spans to placeholder through translation and restore
-  // byte-identical afterwards (names, quotes, numbers survive JA→EN).
-  // Structure: text is split on newline runs; each piece is translated
-  // separately and separators are passed through verbatim, so paragraph
-  // and line breaks survive. Returns { text, unrestored }.
+  // opts.locked: spans that NEVER enter MT. Only the gaps between them
+  // are translated, then stitched back — locked terms survive JA→EN
+  // byte-identical by construction. No placeholders, so no placeholder
+  // leaks, no mangled tokens, nothing to restore. Newlines live inside
+  // gaps and are preserved via whitespace re-attachment, so paragraph
+  // structure survives. Returns { text, kept }.
   async function roundTrip(text, onProgress, opts = {}) {
-    const locked = (opts.locked || []).slice().sort((a, b) => b.length - a.length);
-
-    // 1. Substitute placeholders (longest spans first).
-    let working = String(text).replace(/\r\n?/g, '\n');
-    const tokens = [];
-    locked.forEach((span, i) => {
-      if (!span || !working.includes(span)) return;
-      const token = `ZZZ${i}ZZZ`;
-      working = working.split(span).join(token);
-      tokens.push({ token, span });
-    });
-
-    // 2. Split structure: odd indices are newline runs, kept verbatim.
-    const parts = working.split(/([ \t]*\n[ \t]*)/);
-    const segments = [];
-    for (let i = 0; i < parts.length; i += 2) {
-      if (parts[i].trim()) segments.push(i);
-    }
+    const parts = splitGaps(String(text).replace(/\r\n?/g, '\n'), opts.locked);
 
     const enJa = await getTranslator('en', 'ja',
       (pct) => onProgress && onProgress('en-ja', pct));
     const jaEn = await getTranslator('ja', 'en',
       (pct) => onProgress && onProgress('ja-en', pct));
 
+    // Gaps with no translatable content ride through verbatim (saves
+    // MT calls and avoids punctuation-only fragments gaining noise).
+    const jobs = [];
+    parts.forEach((p, i) => {
+      if (!p.span && /[A-Za-z0-9]/.test(p.text)) jobs.push(i);
+    });
+
     let done = 0;
     let kept = 0;
-    for (const idx of segments) {
-      const before = parts[idx];
-      const preVoice = countFirstPerson(before);
-      const ja = await translateText(enJa, before);
+    for (const idx of jobs) {
+      const before = parts[idx].text;
+      // Preserve boundary whitespace; translate the core only.
+      const lead = (before.match(/^\s*/) || [''])[0];
+      const trail = (before.match(/\s*$/) || [''])[0];
+      const core = before.slice(lead.length, before.length - trail.length);
+      const ja = await translateText(enJa, core);
       const en = await translateText(jaEn, ja);
-      // Length guard: a sane translation stays within ~3x word count.
-      // Extreme ratios mean the MT scrambled or hallucinated — keep the
-      // pre-translation segment (placeholders still get restored later).
-      // Skipped for tiny segments where variance is naturally high.
-      const wb = countWords(before);
-      const wa = countWords(en);
-      const scrambled = wb >= 6 && (wa / wb > 2.5 || wa / wb < 0.3);
-      // POV guard: translation must not introduce first-person pronouns
-      // the source segment didn't have ("My computer" in third-person).
-      // Tokens are pronoun-neutral, locked spans cancel out — only NEW
-      // intrusions trip it. Applies at any segment length.
-      const voiceBreak = countFirstPerson(en) > preVoice;
-      if (scrambled || voiceBreak) {
+      if (gapTripsGuards(core, en)) {
         kept++;
       } else {
-        parts[idx] = en;
+        parts[idx].text = lead + en.trim() + trail;
       }
       done++;
-      if (onProgress) onProgress('segments', done, segments.length);
+      if (onProgress) onProgress('segments', done, jobs.length);
     }
 
-    // 3. Restore placeholders. Case-insensitive — MT may fold token case.
-    let result = parts.join('');
-    for (const { token, span } of tokens) {
-      result = result.replace(new RegExp(token, 'gi'), span);
-    }
-    // Fidelity signal: locked spans missing after restore + tokens the
-    // MT mangled beyond recognition.
-    const lost = tokens.filter(({ span }) => !result.includes(span)).length;
-    const leftover = result.match(/ZZZ\d+ZZZ/gi) || [];
-    const unrestored = lost + leftover.length;
-
-    return { text: result, unrestored, kept };
+    return { text: parts.map((p) => p.text).join(''), kept };
   }
 
   // Destroy translators created during the run (cleanup)
