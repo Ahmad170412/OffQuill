@@ -564,6 +564,114 @@ textarea::placeholder { color: var(--dim); }
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
 @keyframes spin  { to{transform:rotate(360deg)} }
 
+/* mode slider (Text | Code) */
+.mode-bar {
+  display: flex;
+  justify-content: center;
+  margin: -.5rem 0 -.5rem;
+}
+
+.mode-switch {
+  position: relative;
+  display: flex;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 3px;
+  gap: 0;
+}
+
+.mode-pill {
+  position: relative;
+  z-index: 1;
+  padding: .4rem 1.6rem;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dim);
+  font-family: var(--sans);
+  font-size: .78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color .2s;
+  white-space: nowrap;
+}
+
+.mode-pill:hover { color: var(--text); }
+.mode-pill.active { color: var(--bg); }
+
+.mode-slide {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc(50% - 3px);
+  border-radius: 7px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-h));
+  transition: transform .25s ease;
+}
+
+.mode-switch[data-mode="code"] .mode-slide { transform: translateX(100%); }
+
+/* language selector (code mode only) */
+.lang-selector {
+  position: absolute;
+  bottom: .5rem;
+  right: .5rem;
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+  font-size: .68rem;
+  color: var(--dim);
+  background: var(--surface);
+  z-index: 2;
+}
+
+.lang-selector[hidden] { display: none; }
+
+.lang-selector label {
+  font-family: var(--sans);
+  user-select: none;
+}
+
+.lang-selector select {
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: .68rem;
+  padding: .2rem .4rem;
+  cursor: pointer;
+  outline: none;
+}
+
+.lang-selector select:hover { border-color: var(--accent); }
+.lang-selector select:focus { border-color: var(--accent); }
+
+/* when the lang selector is visible, shrink the drop zone away from it */
+.editor.has-lang .drop {
+  right: 9.5rem;
+}
+.editor.has-text.has-lang .drop {
+  right: 0;
+}
+
+/* code mode: hide translate toggle (translation mangles code) */
+body.code-mode #translateToggleWrap { display: none; }
+
+/* code mode: detected-language hint chip */
+.lang-hint {
+  position: absolute;
+  top: .65rem;
+  right: 3.4rem;
+  font-family: var(--mono);
+  font-size: .62rem;
+  color: var(--accent);
+  opacity: .8;
+  pointer-events: none;
+}
+
 /* responsive */
 @media (max-width: 640px) {
   .main { padding: 1rem; }
@@ -573,4 +681,6 @@ textarea::placeholder { color: var(--dim); }
   .go-wrap { align-items: stretch; }
   .shortcut-hint { text-align: center; }
   .meta { width: 100%; text-align: center; }
+  .mode-pill { padding: .4rem 1.1rem; }
+  .lang-hint { display: none; }
 }

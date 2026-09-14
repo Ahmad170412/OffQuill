@@ -22,6 +22,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const editorIn  = document.getElementById('editorInput');
   const toggleTranslate = document.getElementById('toggleTranslate');
   const translateWrap = document.getElementById('translateToggleWrap');
+  const modeSwitch = document.querySelector('.mode-switch');
+  const langSelector = document.getElementById('langSelector');
+  const languageSelect = document.getElementById('languageSelect');
+  const lineCount = document.getElementById('lineCount');
 
   let strength = 'light';
 
@@ -45,17 +49,93 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   if (toggleTranslate && prefs.translate === true) toggleTranslate.checked = true;
 
-  // --- Input state: word counter, clear button, drop-zone label ---
+  // --- Mode state (Text | Code) + language preference ---
+  let mode = 'text';
+  let codeLang = 'auto';
+  let langHint = null;
+
+  function applyMode(m) {
+    mode = (m === 'code') ? 'code' : 'text';
+    const isCode = mode === 'code';
+    document.body.classList.toggle('code-mode', isCode);
+    if (modeSwitch) {
+      modeSwitch.dataset.mode = mode;
+      modeSwitch.querySelectorAll('.mode-pill').forEach(p =>
+        p.classList.toggle('active', p.dataset.mode === mode));
+    }
+    if (langSelector) langSelector.hidden = !isCode;
+    if (editorIn) editorIn.classList.toggle('has-lang', isCode);
+    if (lineCount) lineCount.hidden = !isCode;
+    if (wordCount) wordCount.hidden = isCode;
+    if (input) input.placeholder = isCode ? 'Paste code here' : 'Paste text here';
+    if (output) output.placeholder = isCode ? 'Cleaned code...' : 'Result...';
+    if (btnGo && !btnGo.disabled) btnGo.textContent = isCode ? 'clean code' : 'remove watermark';
+    if (dropZone) dropZone.setAttribute('aria-label',
+      isCode ? 'Upload a code file' : 'Upload a text or markdown file');
+    savePrefs({ mode });
+    updateLangHint();
+    updateInputState();
+  }
+
+  // Detected-language chip (code mode only). Manual selection wins;
+  // otherwise sniff the input. Hidden when unknown.
+  function updateLangHint(detected) {
+    if (mode !== 'code') {
+      if (langHint) { langHint.remove(); langHint = null; }
+      return;
+    }
+    let label = null;
+    if (codeLang !== 'auto') {
+      label = codeLang;
+    } else {
+      try { label = detected || detectLanguage(input.value); }
+      catch { label = null; }
+    }
+    if (!label || label === 'auto') {
+      if (langHint) { langHint.remove(); langHint = null; }
+      return;
+    }
+    if (!langHint) {
+      langHint = document.createElement('span');
+      langHint.className = 'lang-hint';
+      editorIn.appendChild(langHint);
+    }
+    langHint.textContent = label;
+  }
+
+  // --- Input state: word/line counter, clear button, drop-zone label ---
   function updateInputState() {
-    const n = countWords(input.value.trim());
-    if (wordCount) wordCount.textContent = n === 1 ? '1 word' : `${n} words`;
-    if (editorIn) editorIn.classList.toggle('has-text', n > 0);
-    if (btnClear) btnClear.hidden = n === 0;
-    if (dropZone) dropZone.textContent = n > 0 ? 'drop file to replace' : 'drop file or click';
+    const isCode = mode === 'code';
+    const hasAny = input.value.trim().length > 0;
+    if (isCode) {
+      const n = input.value ? input.value.split('\n').length : 0;
+      if (lineCount) lineCount.textContent = n === 1 ? '1 line' : `${n} lines`;
+    } else {
+      const n = countWords(input.value.trim());
+      if (wordCount) wordCount.textContent = n === 1 ? '1 word' : `${n} words`;
+    }
+    if (editorIn) editorIn.classList.toggle('has-text', hasAny);
+    if (btnClear) btnClear.hidden = !hasAny;
+    if (dropZone) dropZone.textContent = hasAny ? 'drop file to replace' : 'drop file or click';
+    updateLangHint();
   }
 
   input.addEventListener('input', updateInputState);
   updateInputState();
+
+  // --- Init mode + language from prefs ---
+  if (languageSelect) {
+    if (prefs.codeLang) {
+      languageSelect.value = prefs.codeLang;
+      codeLang = prefs.codeLang;
+    }
+    languageSelect.addEventListener('change', () => {
+      codeLang = languageSelect.value;
+      savePrefs({ codeLang });
+      updateLangHint();
+    });
+  }
+  applyMode(prefs.mode === 'code' ? 'code' : 'text');
 
   // --- Clear button ---
   btnClear.addEventListener('click', () => {
@@ -151,6 +231,15 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
+  // --- Mode slider (Text | Code) ---
+  if (modeSwitch) {
+    modeSwitch.addEventListener('click', (e) => {
+      const pill = e.target.closest('.mode-pill');
+      if (!pill) return;
+      applyMode(pill.dataset.mode);
+    });
+  }
+
   // --- Strength pills ---
   document.querySelector('.strength').addEventListener('click', (e) => {
     const pill = e.target.closest('.pill');
@@ -226,13 +315,131 @@ document.addEventListener('DOMContentLoaded', () => {
     progressFill.style.width = '0%';
   }
 
+  // --- Code pipeline: Layer A → CodeB (Nano rewrite) → CodeC (style) ---
+  // Same graceful-degradation philosophy as text mode: every stage can
+  // fail independently and the pipeline keeps the best text so far.
+  async function runCodePipeline(text) {
+    const codeLines = text.split('\n').filter((l) => l.trim()).length;
+    if (codeLines < 3) {
+      showToast(`Only ${codeLines} line${codeLines === 1 ? '' : 's'} — results may be odd. Add more code for best results.`, 'warn');
+    }
+
+    btnGo.disabled = true;
+    const editorOut = document.getElementById('editorOutput');
+
+    try {
+      // Phase 1: Unicode scrub (Layer A) + trailing-whitespace strip
+      // (safe in every language).
+      startDots('scrubbing unicode');
+      setProgress(10);
+      status.className = 'status checking';
+      status.textContent = 'Layer A...';
+      editorIn.classList.add('processing');
+
+      const layerA = LayerA.clean(text).cleaned.replace(/[ \t]+$/gm, '');
+      await sleep(150);
+
+      // Phase 2: language (manual selection wins, else sniff).
+      const lang = codeLang !== 'auto' ? codeLang : detectLanguage(layerA);
+      updateLangHint(lang);
+      setProgress(22);
+
+      // Phase 3: Nano rewrite (identifier renames + comment rewrite).
+      // Locked terms (strings, imports, API names, numbers) are verified
+      // afterwards — a rewrite that drops them is discarded entirely.
+      startDots('rewriting code');
+      editorOut.classList.add('processing');
+
+      let current = layerA;
+      let meta = `${codeLines} lines · ${lang}`;
+      try {
+        const locked = CodeB.extractLockedTerms(layerA);
+        const result = await CodeB.paraphrase(layerA, strength, (pct) => {
+          status.className = 'status checking';
+          status.textContent = `model ${Math.round(pct)}%`;
+        }, { locked });
+        if (result.changed) {
+          current = result.text;
+          meta += ' · rewritten';
+        } else {
+          meta += ' · scrubbed only';
+          if (result.missingSpans.length) {
+            showToast(`Kept original — rewrite dropped: ${result.missingSpans.slice(0, 2).join(', ')}`, 'warn');
+          }
+        }
+        setProgress(70);
+        await sleep(150);
+      } catch (err) {
+        console.warn('Code paraphrase failed, using scrubbed only:', err.message);
+        meta += ' · Layer A only';
+        status.className = 'status unavail';
+        status.textContent = 'Layer A only';
+        showToast('No AI model found — output is Unicode-scrubbed only. Enable Chrome flags to unlock rewriting.', 'warn');
+        await sleep(150);
+      }
+
+      // Phase 4: deterministic style cleanup (CodeC). Guards bail out
+      // to the pre-cleanup text on minified input or delimiter mismatch.
+      startDots('cleaning style');
+      setProgress(85);
+      const cleaned = CodeC.clean(current, lang);
+      if (cleaned.minified) {
+        showToast('Looks minified — skipping style cleanup to avoid damage', 'warn');
+      } else if (cleaned.balanced === false) {
+        showToast('Delimiter check failed — kept rewrite without style cleanup', 'warn');
+      } else {
+        current = cleaned.cleaned;
+        if (cleaned.count > 0) meta += ` · ${cleaned.count} style fixes`;
+      }
+      setProgress(100);
+      hideProgress();
+
+      output.value = current;
+      if (metaLine) metaLine.textContent = meta;
+      btnCopy.disabled = false;
+
+      // Success flash — stronger, longer
+      editorOut.style.borderColor = 'var(--accent)';
+      editorOut.style.boxShadow = '0 0 30px var(--glow), 0 0 60px rgba(6,214,160,0.06)';
+      setTimeout(() => { editorOut.style.borderColor = ''; editorOut.style.boxShadow = ''; }, 1800);
+
+      // Success toast
+      showToast('Done', 'success');
+
+    } catch (err) {
+      console.error(err);
+      const msg = err.message || 'Unknown error';
+      const friendly = msg.includes('timed out')
+        ? 'The AI model took too long to respond — try again'
+        : msg.includes('unavailable') || msg.includes('not supported')
+        ? 'AI model not available — check Chrome flags'
+        : `Something went wrong: ${msg}`;
+      showToast(friendly, 'error');
+      status.className = 'status unavail';
+      status.textContent = 'error';
+      if (progressWrap) progressWrap.classList.remove('show');
+      if (progressFill) progressFill.style.width = '0%';
+    } finally {
+      LayerB.destroy();
+      stopDots();
+      btnGo.disabled = false;
+      btnGo.textContent = 'clean code';
+      editorIn.classList.remove('processing');
+      editorOut.classList.remove('processing');
+    }
+  }
+
   // --- GO button ---
   btnGo.addEventListener('click', async () => {
     const text = input.value.trim();
     if (!text) {
-      showToast('Paste some text first', 'warn');
+      showToast(mode === 'code' ? 'Paste some code first' : 'Paste some text first', 'warn');
       return;
     }
+
+    // Code mode runs its own pipeline (no translation round-trip —
+    // translation mangles code, so the toggle stays hidden).
+    if (mode === 'code') { await runCodePipeline(text); return; }
 
     // Short-input warning — make it visible, not dismissible as background noise.
     const inputWords = countWords(text);
@@ -482,7 +689,7 @@ document.addEventListener('DOMContentLoaded', () => {
       LayerD.destroy();
       stopDots();
       btnGo.disabled = false;
-      btnGo.textContent = 'remove watermark';
+      btnGo.textContent = mode === 'code' ? 'clean code' : 'remove watermark';
       editorIn.classList.remove('processing');
       editorOut.classList.remove('processing');
     }
@@ -538,7 +745,22 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     const reader = new FileReader();
-    reader.onload = () => { input.value = reader.result; updateInputState(); };
+    reader.onload = () => {
+      input.value = reader.result;
+      // In code mode, a recognized extension presets the language.
+      if (mode === 'code' && file.name) {
+        try {
+          const ext = (file.name.split('.').pop() || '').toLowerCase();
+          const lang = extensionToLang(ext);
+          if (lang !== 'auto' && languageSelect) {
+            languageSelect.value = lang;
+            codeLang = lang;
+            savePrefs({ codeLang });
+          }
+        } catch { /* sniffing stays on Auto */ }
+      }
+      updateInputState();
+    };
     reader.readAsText(file);
   }
 
