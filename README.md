@@ -55,7 +55,7 @@ Three strength levels — **light** (polish pass), **medium** (rewrite), **stron
 
 ### Layer C — Phrase Swaps
 
-Deterministic find-and-replace of 37+ AI-filler phrases with case-matching and sentence-start capitalization fixes. No AI calls, no latency.
+Deterministic find-and-replace of 79 AI-filler phrases with case-matching and sentence-start capitalization fixes. No AI calls, no latency.
 
 Examples: `delve into` → `look at`, `in order to` → `to`, `leverages` → `uses`, `Furthermore,` → `Also,`.
 
@@ -65,7 +65,7 @@ Uses Chrome's `Translator` API to route text through Japanese, breaking English 
 
 - POV guards (catches first-person pronoun injection)
 - Length guards (discards scrambled MT output)
-- Placeholder restoration (locked terms survive translation)
+- Placeholder-free stitching (locked terms survive translation byte-identical, with nothing to restore)
 - Quality gate (reverts translation if it converges back toward the original)
 
 ---
@@ -73,7 +73,7 @@ Uses Chrome's `Translator` API to route text through Japanese, breaking English 
 ## Quick start
 
 1. **Open in Chrome** on desktop (the only supported browser)
-2. **Enable Chrome flags** (see below — 3 flags required)
+2. **Enable Chrome flags** (see below — 2 required, 1 optional for translation)
 3. Paste text, choose a strength level, click **remove watermark**
 4. Or press **⌘/Ctrl + Enter** to run instantly
 5. Toggle **EN→JA→EN round-trip** on the left for the translation pass
