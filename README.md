@@ -28,6 +28,12 @@ No text ever leaves your browser. No API keys. No network calls — not even web
 
 ---
 
+## Project write-up
+
+A full write-up of the project is included in the repo: **[OffQuill.pdf](OffQuill.pdf)**. It covers the motivation, the four-layer pipeline, the on-device architecture, and the design decisions behind the fidelity/locked-term system.
+
+---
+
 ## The pipeline
 
 ```
