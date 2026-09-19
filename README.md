@@ -144,5 +144,5 @@ MIT — see [LICENSE](LICENSE).
 
 ## Acknowledgments
 
-- Unicode scrub logic ported from [guillaumeyer/watermarks-remover](https://github.com/guillaumeyer/watermarks-remover)
+- Unicode scrub logic ported from [guillaumeyer/watermarks-remover](https://github.com/guillaumemeyer/watermarks-remover)
 - Built entirely with Chrome's on-device AI APIs — no external services, no API keys, no server infrastructure
